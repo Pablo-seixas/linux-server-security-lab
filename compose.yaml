@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_OWNER}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - backend
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    security_opt:
+      - no-new-privileges:true
+
+  php:
+    build:
+      context: ./app
+    environment:
+      APP_ENV: ${APP_ENV}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_APP_USER}
+      DB_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    networks:
+      - backend
+      - frontend
+    security_opt:
+      - no-new-privileges:true
+
+  nginx:
+    build:
+      context: ./infrastructure/nginx
+    depends_on:
+      - php
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT}:8080"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${SSH_PORT:-2222}:22"
+    volumes:
+      - ./app/public:/var/www/html:ro
+      - ./infrastructure/nginx/default.conf:/etc/nginx/sites-enabled/security-lab:ro
+      - ./infrastructure/nginx/nftables.conf:/etc/nftables.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m
+      - /var/lib/nginx:rw,noexec,nosuid,size=16m
+      - /var/log/nginx:rw,noexec,nosuid,size=8m
+      - /var/run:rw,noexec,nosuid,size=4m
+      - /run:rw,noexec,nosuid,size=4m
+    networks:
+      - frontend
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:

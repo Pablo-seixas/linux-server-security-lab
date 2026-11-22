@@ -1,0 +1,11 @@
+/var/log/security-lab/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+    su root adm
+    dateext
+}

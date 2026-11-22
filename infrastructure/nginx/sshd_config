@@ -1,0 +1,19 @@
+Port 22
+Protocol 2
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+AllowUsers labadmin
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+GatewayPorts no
+PermitUserEnvironment no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+MaxAuthTries 3
+LoginGraceTime 30
+LogLevel VERBOSE
+Subsystem sftp internal-sftp
