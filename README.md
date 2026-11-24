@@ -58,16 +58,18 @@ Hardened Linux gateway
 
 ## Validated controls
 
-| Area | Implemented control | Result |
+| Area | Mode | Result and evidence |
 | --- | --- | --- |
-| Network | Service bound only to a VirtualBox host-only address | Passed |
-| Firewall | `nftables` input policy defaults to `drop` | Passed |
-| SSH | Key-only login, no root, no password, restricted user | Passed |
-| Web | Security headers, method restrictions, 404 handling | Passed |
-| Runtime | Read-only containers and `no-new-privileges` | Passed |
-| Database | Internal-only PostgreSQL and least-privilege app role | Passed |
-| Recovery | SHA-256 backup validation and disposable restore drill | Passed |
-| Data | Six fictional football records with no third-party feed | Passed |
+| Compose | Disposable/local | [Passed — rendered configuration](docs/VALIDATION_EVIDENCE.md#compose-configuration) |
+| Network | Local | [Passed — default loopback bind](docs/VALIDATION_EVIDENCE.md#local-mode) |
+| Firewall | Host-only, server side | [Passed — input policy `drop`](docs/VALIDATION_EVIDENCE.md#host-only-server-configuration) |
+| SSH hardening | Host-only, server side | [Passed — effective daemon policy](docs/VALIDATION_EVIDENCE.md#host-only-server-configuration) |
+| BlackArch reachability | Host-only, external | [Limited — ARP only; ports inconclusive](docs/VALIDATION_EVIDENCE.md#external-blackarch-observation--limited-reachability) |
+| Web | Local | [Passed — status, headers, methods, routing](docs/VALIDATION_EVIDENCE.md#local-application-mode) |
+| Runtime | Local/host-only | [Passed — read-only and no-new-privileges](reports/FINAL_VALIDATION_REPORT.md#validated-scope) |
+| Database | Disposable/local | [Passed — application-role assertions](docs/VALIDATION_EVIDENCE.md#database-privilege-policy) |
+| Recovery | Disposable/local | [Passed — integrity, content, cleanup](docs/VALIDATION_EVIDENCE.md#backup-and-restore) |
+| Data | Disposable/local | [Passed — six synthetic fixtures](docs/VALIDATION_EVIDENCE.md#database-privilege-policy) |
 
 ## Quick start
 
@@ -82,6 +84,54 @@ docker compose --env-file .env ps
 
 The bootstrap script creates random local credentials and an SSH key under
 ignored paths. Neither `.env` nor `.secrets/` belongs in Git.
+
+### Local mode (default)
+
+`.env.example` binds HTTP and SSH to `127.0.0.1`. Use this mode for routine
+development, database verification, backup, and restore. It is not reachable
+from another VM.
+
+```dotenv
+APP_BIND_ADDRESS=127.0.0.1
+```
+
+### VirtualBox host-only mode (opt-in)
+
+Change the bind address only to the address of an isolated VirtualBox host-only
+adapter. Never use a Wi-Fi, public, or internet-facing address.
+
+```dotenv
+APP_BIND_ADDRESS=<HOST_ONLY_ADDRESS>
+```
+
+Host-only server configuration and external VM reachability are separate
+validation results. The current external BlackArch result is limited and
+inconclusive; see the linked evidence above.
+
+## Database privilege test
+
+Run from a POSIX shell with Docker access:
+
+```bash
+COMPOSE_PROJECT_NAME=linux-server-security-lab \
+ENV_FILE=.env \
+sh tests/run_database_privilege_test.sh
+```
+
+The runner uses a temporary mode `0600` `PGPASSFILE` inside the PostgreSQL
+container. It does not put the application password in the command line or
+published output. The SQL test verifies the application identity and fails
+non-zero on any grant or denial mismatch.
+
+For a database volume created before migration `003` existed, apply the repair
+migration once as the database owner before running the test:
+
+```bash
+docker compose --env-file .env exec -T postgres \
+  psql --username=security_lab_owner --dbname=security_lab \
+  --set=ON_ERROR_STOP=1 \
+  --file=/docker-entrypoint-initdb.d/003_enforce_football_read_only.sql
+```
 
 ## Repository layout
 
@@ -109,16 +159,18 @@ ignored paths. Neither `.env` nor `.secrets/` belongs in Git.
 
 ## Isolated assessment target
 
-The service is designed to bind to the VirtualBox host-only interface instead
-of Wi-Fi or a public interface. In this workstation, the authorized target is:
+Host-only mode is optional. During the earlier lab configuration, the
+authorized target was:
 
 ```text
 http://192.168.56.1:8088
 ```
 
-The BlackArch VM must use its second, host-only adapter and an unused address in
-`192.168.56.0/24`. NAT remains available on the first adapter for updates, but
-the assessment target is reachable only over the host-only segment.
+The BlackArch VM used a second, host-only adapter. The latest external attempt
+observed an ARP response but no response to three TCP 2222 SYNs, and HTTP 8088
+timed out. No SSH handshake completed; `ssh-audit` and Katana were not run; TCP
+5432 was not probed. Treat this as an undetermined reachability limitation, not
+as a passed remote assessment.
 
 Allowed endpoints:
 
@@ -137,16 +189,18 @@ forwarding, X11 forwarding, and tunnelling are disabled.
 
 ## Validated evidence
 
-- Successful PHP health response and PostgreSQL round trip (`HTTP 200`).
-- `psql` role and privilege inspection with sensitive values removed.
-- Backup artifact, SHA-256 checksum, and successful disposable restore drill.
-- Hardened SSH, firewall ruleset, HTTP response, and listening-port checks.
-- Final quality and security report with findings and remediation status.
+- [Reproducible validation evidence](docs/VALIDATION_EVIDENCE.md), separated by
+  execution date and local/host-only mode.
+- [Final validation report](reports/FINAL_VALIDATION_REPORT.md), including
+  remediated defects and remaining limitations.
+- [Quality and security test plan](docs/TEST_PLAN.md).
 
-See [`reports/FINAL_VALIDATION_REPORT.md`](reports/FINAL_VALIDATION_REPORT.md)
-for the current execution record. An additional BlackArch assessment remains
-pending because that VM requires repair; the completed server-side controls are
-reported separately and are not presented as penetration-test results.
+Two defects discovered during execution are visible portfolio evidence:
+
+- [`libpq5` runtime dependency removal](docs/VALIDATION_EVIDENCE.md#php-runtime-dependency)
+  caused HTTP `503`; preserving the runtime library restored database health.
+- [BusyBox `sha256sum` compatibility](docs/VALIDATION_EVIDENCE.md#busybox-checksum-compatibility)
+  required portable `-c`; checksum and restore retests then passed.
 
 For controlled assessment commands and AI-assisted testing boundaries, see
 [`docs/BLACKARCH_ASSESSMENT.md`](docs/BLACKARCH_ASSESSMENT.md) and the reusable
@@ -171,8 +225,10 @@ private keys, raw authentication logs, MAC addresses, or unrelated services.
 ## Status
 
 The containerized server, API, database controls, firewall, SSH hardening,
-backup, restore drill, and local quality checks are implemented and validated.
-The separate BlackArch client assessment is explicitly pending.
+backup, restore drill, and local quality checks are implemented. Server-side
+controls and external reachability are reported separately. The BlackArch
+client result is limited/inconclusive and is not presented as a completed
+penetration test.
 
 ## License
 

@@ -2,10 +2,11 @@
 
 ## Authorization and scope
 
-The only authorized application target is `192.168.56.1` on TCP port `8088`.
-Testing must originate from the personally controlled `ARCH` VirtualBox VM over
-its host-only adapter. Do not scan the Wi-Fi subnet, the internet, another VM,
-or any address outside `192.168.56.1`.
+The application defaults to local mode (`127.0.0.1`), which is intentionally
+unreachable from a VM. BlackArch work requires an explicit opt-in host-only
+bind. During the recorded assessment attempt, the only authorized target was
+`192.168.56.1`. Testing originated from the personally controlled `ARCH`
+VirtualBox VM. Do not scan Wi-Fi, the internet, another VM, or any other target.
 
 The project may be published, but the live assessment workspace is private.
 Repository documentation must use placeholders or sanitized lab values. Never
@@ -41,11 +42,14 @@ Run a secret scanner such as Gitleaks against the complete history before the
 first push. If a secret is ever committed, removing it in a later commit is not
 enough: rotate the credential first, then purge it from Git history.
 
-## Required host firewall gate
+## PostgreSQL scope and Windows firewall
 
 A separate PostgreSQL service installed on the Windows host listens on wildcard
-address TCP 5432. It is not part of this Docker project. Before any BlackArch
-scan, run the following command once in an elevated PowerShell window:
+address TCP 5432. It is not part of this Docker project. The PostgreSQL service
+in `compose.yaml` has no published host port and remains internal to the Compose
+backend network.
+
+The following restricted Windows Firewall rule was reported as created:
 
 ```powershell
 New-NetFirewallRule `
@@ -55,8 +59,25 @@ New-NetFirewallRule `
   -RemoteAddress 192.168.56.0/24 -Profile Any
 ```
 
-From BlackArch, confirm that TCP 5432 is filtered before beginning the approved
-tests. Do not connect to or test the Windows PostgreSQL service.
+Its effectiveness from BlackArch is **not confirmed**: TCP 5432 was not probed
+during the recorded external attempt. Do not connect to or enumerate the
+separate Windows PostgreSQL service.
+
+## Recorded external result
+
+The BlackArch attempt produced limited reachability evidence:
+
+- ARP response observed from the target.
+- TCP 2222 attempt: three outbound SYN packets captured; no response observed.
+- TCP 8088: HTTP request timed out without a response.
+- SSH handshake: not completed.
+- `ssh-audit`: not executed.
+- Katana: not executed.
+- TCP 5432: not probed.
+
+Classification: **limited / inconclusive**. The cause is undetermined. The
+evidence does not isolate VirtualBox networking, Windows filtering, the
+container firewall, port publication, or service state as the cause.
 
 ## Remote shell access
 
@@ -134,12 +155,16 @@ fuzzers with unbounded input, or tools configured for evasion or persistence.
 7. Store raw evidence outside Git; copy only a redacted derivative into the
    repository.
 
-## Expected target behavior
+## Intended target behavior (not external proof)
 
-- TCP `8088` accepts HTTP through nginx.
-- TCP `2222` accepts SSH with the dedicated key as `labadmin`.
+- TCP `8088` should accept HTTP through nginx in host-only mode.
+- TCP `2222` should accept SSH with the dedicated key as `labadmin` in
+  host-only mode.
 - `/health` returns HTTP 200 while PostgreSQL is healthy.
 - `/api/matches` returns fictional synthetic data.
 - Unknown routes return HTTP 404.
 - Unsupported methods are denied.
-- PostgreSQL is not published to the host-only network.
+- Compose PostgreSQL is not published to the host-only network.
+
+The intended behavior above must be retested from BlackArch before it can be
+reported as externally verified.

@@ -25,6 +25,7 @@ VALUES
     ('2026-11-07T18:30:00Z', 'Recife Harbor SC', 'Salvador Tech AC', 1, 0, 'Atlantic Field');
 
 REVOKE ALL ON TABLE app.football_matches FROM PUBLIC;
+REVOKE ALL ON TABLE app.football_matches FROM security_lab_app;
 GRANT SELECT ON TABLE app.football_matches TO security_lab_app;
 
 COMMIT;

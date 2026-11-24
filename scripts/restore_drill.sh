@@ -35,16 +35,87 @@ if psql --dbname=postgres --tuples-only --no-align \
     exit 1
 fi
 
-createdb "$RESTORE_DATABASE"
-cleanup() {
-    dropdb --if-exists "$RESTORE_DATABASE"
+database_created=false
+
+database_exists() {
+    psql --dbname=postgres --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command="SELECT count(*) FROM pg_database WHERE datname = '$RESTORE_DATABASE'"
 }
-trap cleanup EXIT INT TERM
+
+cleanup_database() {
+    if ! dropdb --if-exists "$RESTORE_DATABASE"; then
+        echo "Failed to remove disposable database: $RESTORE_DATABASE" >&2
+        return 1
+    fi
+
+    if test "$(database_exists)" != 0; then
+        echo "Disposable database still exists after cleanup: $RESTORE_DATABASE" >&2
+        return 1
+    fi
+
+    database_created=false
+}
+
+cleanup_on_exit() {
+    exit_status=$?
+    trap - EXIT
+    if test "$database_created" = true && ! cleanup_database; then
+        exit_status=1
+    fi
+    exit "$exit_status"
+}
+
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+createdb "$RESTORE_DATABASE"
+database_created=true
 
 pg_restore --exit-on-error --no-owner --no-privileges \
     --dbname="$RESTORE_DATABASE" "$BACKUP_FILE"
 
-psql --dbname="$RESTORE_DATABASE" --set=ON_ERROR_STOP=1 \
-    --command='SELECT count(*) AS restored_tables FROM information_schema.tables WHERE table_schema = '\''app'\'';'
+for expected_table in maintenance_events football_matches; do
+    table_exists="$(
+        psql --dbname="$RESTORE_DATABASE" --tuples-only --no-align \
+            --set=ON_ERROR_STOP=1 \
+            --command="SELECT to_regclass('app.$expected_table') IS NOT NULL"
+    )"
+    if test "$table_exists" != t; then
+        echo "Expected restored table is missing: app.$expected_table" >&2
+        exit 1
+    fi
+done
 
-echo "Restore drill passed; disposable database will now be removed."
+fixture_matches="$(
+    psql --dbname="$RESTORE_DATABASE" --tuples-only --no-align \
+        --set=ON_ERROR_STOP=1 \
+        --command="
+            SELECT count(*)
+            FROM app.football_matches
+            WHERE played_at = '2026-10-24T21:00:00Z'::timestamptz
+              AND home_team = 'Salvador Tech AC'
+              AND away_team = 'Bahia Solar FC'
+              AND home_score = 1
+              AND away_score = 4
+              AND venue = 'Open Source Park'
+        "
+)"
+if test "$fixture_matches" != 1; then
+    echo "Representative football fixture was not restored as expected." >&2
+    exit 1
+fi
+
+fixture_count="$(
+    psql --dbname="$RESTORE_DATABASE" --tuples-only --no-align \
+        --set=ON_ERROR_STOP=1 \
+        --command='SELECT count(*) FROM app.football_matches'
+)"
+if test "$fixture_count" != 6; then
+    echo "Expected 6 football fixtures, restored $fixture_count." >&2
+    exit 1
+fi
+
+cleanup_database
+trap - EXIT INT TERM
+echo "Restore drill passed; expected tables and fixture data were verified, and the disposable database was removed."
